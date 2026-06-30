@@ -1,4 +1,4 @@
-name: Build Dots & Boxes APK
+name: Build SquareUp APK
 
 on:
   push:
@@ -10,6 +10,7 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -27,91 +28,64 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Create missing asset dirs
+      - name: Write local.properties
+        run: |
+          echo "flutter.sdk=$(which flutter | sed 's|/bin/flutter||')" > android/local.properties
+          echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
+          echo "flutter.buildMode=release" >> android/local.properties
+          echo "flutter.versionCode=1" >> android/local.properties
+          echo "flutter.versionName=1.0.0" >> android/local.properties
+          cat android/local.properties
+
+      - name: Create asset placeholder dirs
         run: |
           mkdir -p assets/sounds
-          mkdir -p assets/fonts
-          # Create a silent placeholder sound so flutter doesn't fail on missing asset
           touch assets/sounds/.keep
 
-      - name: Patch pubspec to remove missing font assets
+      - name: Strip missing font/sound assets from pubspec
         run: |
-          # Remove font declarations since we don't have the actual font files
-          # Flutter will fall back to system fonts
-          python3 - <<'EOF'
+          python3 - <<'PYEOF'
           import re
           with open('pubspec.yaml', 'r') as f:
               content = f.read()
-          # Remove fonts section
-          content = re.sub(r'\n  fonts:.*', '', content, flags=re.DOTALL)
+          # Remove fonts block entirely
+          content = re.sub(r'\n  fonts:(\n    .*)+', '', content)
+          # Remove assets block and replace with nothing (no custom assets needed)
+          content = re.sub(r'\n  assets:(\n    .*)+', '', content)
           with open('pubspec.yaml', 'w') as f:
               f.write(content)
-          print("pubspec.yaml patched")
-          EOF
-
-      - name: Patch pubspec to remove missing sound assets
-        run: |
-          python3 - <<'EOF'
-          with open('pubspec.yaml', 'r') as f:
-              content = f.read()
-          # Replace assets section to only include the .keep placeholder
-          import re
-          content = re.sub(
-              r'  assets:\n    - assets/sounds/',
-              '  assets:\n    - assets/sounds/.keep\n    #',
-              content
-          )
-          with open('pubspec.yaml', 'w') as f:
-              f.write(content)
-          print("Assets section patched")
-          EOF
+          print("pubspec cleaned")
+          PYEOF
 
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Patch Kotlin/Gradle for compatibility
+      - name: Make gradlew executable
         run: |
-          # Ensure Kotlin DSL compatibility
-          if [ -f android/build.gradle ]; then
-            sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.10"/' android/build.gradle || true
+          cd android
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version=8.3 || true
           fi
-          if [ -f android/build.gradle.kts ]; then
-            sed -i 's/kotlinVersion = .*/kotlinVersion = "1.9.10"/' android/build.gradle.kts || true
-          fi
-
-      - name: Enable core library desugaring
-        run: |
-          APP_GRADLE="android/app/build.gradle"
-          APP_GRADLE_KTS="android/app/build.gradle.kts"
-          if [ -f "$APP_GRADLE" ]; then
-            # Add compileOptions if not present
-            if ! grep -q "coreLibraryDesugaringEnabled" "$APP_GRADLE"; then
-              sed -i '/android {/a\    compileOptions {\n        coreLibraryDesugaringEnabled true\n        sourceCompatibility JavaVersion.VERSION_17\n        targetCompatibility JavaVersion.VERSION_17\n    }' "$APP_GRADLE" || true
-            fi
-            # Add desugaring dependency if not present
-            if ! grep -q "com.android.tools:desugar_jdk_libs" "$APP_GRADLE"; then
-              sed -i '/dependencies {/a\    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.4"' "$APP_GRADLE" || true
-            fi
-          fi
+          chmod +x gradlew 2>/dev/null || true
 
       - name: Build APK (release)
-        run: flutter build apk --release --no-shrink
+        run: flutter build apk --release --no-tree-shake-icons
 
-      - name: Upload APK artifact
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: dots-and-boxes-release
+          name: SquareUp-release
           path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30
 
       - name: Build APK (debug fallback)
         if: failure()
-        run: flutter build apk --debug
+        run: flutter build apk --debug --no-tree-shake-icons
 
-      - name: Upload debug APK on failure
+      - name: Upload debug APK
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: dots-and-boxes-debug
+          name: SquareUp-debug
           path: build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 14

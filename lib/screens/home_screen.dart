@@ -35,7 +35,7 @@ class HomeScreen extends StatelessWidget {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: const [
-                      Text('NOCTIS', style: TextStyle(color: Color(0xFF00FFCC), fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 4)),
+                      Text('SQUAREUP', style: TextStyle(color: Color(0xFF00FFCC), fontSize: 18, fontWeight: FontWeight.w900, letterSpacing: 4)),
                       Text('DOTS & BOXES', style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 2)),
                     ],
                   ),

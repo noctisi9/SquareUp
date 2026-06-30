@@ -11,7 +11,7 @@ class DotsAndBoxesApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'NOCTIS Dots & Boxes',
+      title: 'SquareUp',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(

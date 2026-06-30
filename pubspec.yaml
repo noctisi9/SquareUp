@@ -1,5 +1,5 @@
-name: dots_and_boxes
-description: NOCTIS Dots & Boxes — classic grid game with AI and multiplayer
+name: squareup
+description: SquareUp — classic Dots & Boxes grid game with AI and multiplayer
 publish_to: 'none'
 version: 1.0.0+1
 
