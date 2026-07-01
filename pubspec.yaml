@@ -1,20 +1,16 @@
 name: squareup
-description: SquareUp — classic Dots & Boxes grid game with AI and multiplayer
-publish_to: 'none'
+description: SquareUp — Dots & Boxes grid game with AI and multiplayer
+publish_to: "none"
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.6
-  google_fonts: ^6.1.0
   shared_preferences: ^2.2.2
-  audioplayers: ^5.2.1
-  animated_text_kit: ^4.2.2
-  flutter_animate: ^4.3.0
 
 dev_dependencies:
   flutter_test:
@@ -23,14 +19,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/sounds/
-  fonts:
-    - family: Rajdhani
-      fonts:
-        - asset: assets/fonts/Rajdhani-Regular.ttf
-          weight: 400
-        - asset: assets/fonts/Rajdhani-Bold.ttf
-          weight: 700
-        - asset: assets/fonts/Rajdhani-SemiBold.ttf
-          weight: 600

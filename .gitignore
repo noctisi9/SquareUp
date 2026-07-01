@@ -1,4 +1,3 @@
-# Flutter
 .dart_tool/
 .flutter-plugins
 .flutter-plugins-dependencies
@@ -7,34 +6,11 @@
 .pub/
 build/
 *.iml
-*.ipr
-*.iws
 .idea/
 .DS_Store
-*.log
-
-# Android
 android/.gradle
 android/captures/
-android/gradlew
-android/gradlew.bat
 android/local.properties
-android/**/GeneratedPluginRegistrant.java
 android/key.properties
 **/*.keystore
 **/*.jks
-
-# iOS
-ios/.symlinks/
-ios/Flutter/App.framework
-ios/Flutter/Flutter.framework
-ios/Flutter/Flutter.podspec
-ios/Flutter/Generated.xcconfig
-ios/Flutter/ephemeral/
-ios/Flutter/app.flx
-ios/Flutter/app.zip
-ios/Flutter/flutter_assets/
-ios/ServiceDefinitions.json
-ios/Runner/GeneratedPluginRegistrant.*
-ios/Podfile.lock
-ios/Pods/
