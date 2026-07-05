@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../game/game_state.dart';
 import '../multiplayer/hotspot_service.dart';
 import 'game_screen.dart';
+import '../widgets/game_board.dart';
 
 class MultiplayerLobbyScreen extends StatefulWidget {
   const MultiplayerLobbyScreen({super.key});
@@ -106,7 +107,7 @@ class _MultiplayerLobbyScreenState extends State<MultiplayerLobbyScreen> {
     final svc = _service!;
     final isHost = svc.isHost;
     final p1Name = isHost ? (_nameCtrl.text.trim().toUpperCase().isEmpty ? 'HOST' : _nameCtrl.text.trim().toUpperCase()) : (hostName ?? 'HOST');
-    final p2Name = isHost ? 'GUEST' : (guestName ?? _nameCtrl.text.trim().toUpperCase().isEmpty ? 'GUEST' : _nameCtrl.text.trim().toUpperCase());
+    final p2Name = isHost ? 'GUEST' : (guestName ?? (_nameCtrl.text.trim().toUpperCase().isEmpty ? 'GUEST' : _nameCtrl.text.trim().toUpperCase()));
 
     final gs = GameState(
       gridCols: _selectedCols,
