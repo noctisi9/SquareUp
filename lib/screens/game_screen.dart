@@ -296,7 +296,7 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
                             ? '${gs.currentPlayerName} gets another turn! (+$_lastBoxesCompleted box${_lastBoxesCompleted > 1 ? 'es' : ''})'
                             : '${gs.currentPlayerName} — tap a line to draw',
                 style: TextStyle(
-                  color: gs.currentPlayerColor.withOpacity(0.7),
+                  color: Color(gs.currentPlayerColorValue).withOpacity(0.7),
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),

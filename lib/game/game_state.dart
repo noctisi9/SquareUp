@@ -208,8 +208,8 @@ class GameState {
   String get currentPlayerInitial =>
       currentPlayer == Player.one ? player1Initial : player2Initial;
 
-  Color get currentPlayerColor =>
-      currentPlayer == Player.one ? const Color(0xFFE63946) : const Color(0xFF457BFF);
+  int get currentPlayerColorValue =>
+      currentPlayer == Player.one ? 0xFFE63946 : 0xFF457BFF;
 
   String get winnerName {
     if (!gameOver) return '';
