@@ -51,8 +51,8 @@ class _MultiplayerLobbyScreenState extends State<MultiplayerLobbyScreen> {
     _statusSub = _service!.onStatus.listen((s) {
       if (!mounted) return;
       if (s.startsWith('HOST_READY:')) {
-        final ip = s.split(':').last;
-        setState(() { _hostIP = ip; _status = 'Your IP: $ip\nShare this with your friend!'; });
+        final ip = s.substring('HOST_READY:'.length);
+        setState(() { _hostIP = ip; _status = 'Share this IP with your friend.\nThey must be connected to YOUR hotspot first.'; });
       } else if (s == 'WAITING') {
         setState(() => _status = 'Waiting for friend to connect...');
       } else if (s == 'CONNECTED') {
@@ -119,6 +119,8 @@ class _MultiplayerLobbyScreenState extends State<MultiplayerLobbyScreen> {
       player2Initial: p2Name.substring(0, 1),
     );
 
+    // FIX 4: detach so lobby dispose() does not kill the socket
+    svc.detach();
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
@@ -399,6 +401,8 @@ class _MultiplayerGameScreenState extends State<MultiplayerGameScreen> with Sing
     _pulseCtrl.dispose();
     _moveSub?.cancel();
     _statusSub?.cancel();
+    // reattach() so service.dispose() actually closes the socket cleanly
+    widget.service.reattach();
     widget.service.dispose();
     super.dispose();
   }
