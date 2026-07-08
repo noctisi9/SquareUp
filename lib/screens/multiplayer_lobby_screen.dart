@@ -113,10 +113,10 @@ class _MultiplayerLobbyScreenState extends State<MultiplayerLobbyScreen> {
       gridCols: _selectedCols,
       gridRows: _selectedRows,
       mode: GameMode.vsOnline,
-      player1Name: p1Name,
-      player2Name: p2Name,
-      player1Initial: p1Name.substring(0, 1),
-      player2Initial: p2Name.substring(0, 1),
+      players: [
+        PlayerDef(index: 0, name: p1Name, initial: p1Name.substring(0, 1), color: PlayerColors.palette[0]),
+        PlayerDef(index: 1, name: p2Name, initial: p2Name.substring(0, 1), color: PlayerColors.palette[1]),
+      ],
     );
 
     // FIX 4: detach so lobby dispose() does not kill the socket
@@ -352,8 +352,8 @@ class _MultiplayerGameScreenState extends State<MultiplayerGameScreen> with Sing
   int _lastBoxes = 0;
 
   // Host = Player.one, Guest = Player.two
-  Player get myPlayer => widget.isHost ? Player.one : Player.two;
-  bool get isMyTurn => widget.gameState.currentPlayer == myPlayer;
+  int get myIndex => widget.isHost ? 0 : 1;
+  bool get isMyTurn => widget.gameState.currentIndex == myIndex;
 
   @override
   void initState() {
@@ -432,10 +432,15 @@ class _MultiplayerGameScreenState extends State<MultiplayerGameScreen> with Sing
             if (gs.isDrawGame) const Text("IT'S A DRAW! 🤝", style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900))
             else Text('${gs.winnerName} WINS! 🏆', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
             const SizedBox(height: 12),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-              Column(children: [Text(gs.player1Name, style: const TextStyle(color: Color(0xFFE63946), fontWeight: FontWeight.w800)), Text('${gs.player1Score}', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900))]),
-              Column(children: [Text(gs.player2Name, style: const TextStyle(color: Color(0xFF457BFF), fontWeight: FontWeight.w800)), Text('${gs.player2Score}', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900))]),
-            ]),
+            ...gs.sortedPlayers.map((p) => Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(children: [
+                Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: p.color)),
+                const SizedBox(width: 8),
+                Expanded(child: Text(p.name, style: TextStyle(color: p.color, fontWeight: FontWeight.w800))),
+                Text('${p.effectiveScore} pts', style: TextStyle(color: p.color, fontSize: 16, fontWeight: FontWeight.w900)),
+              ]),
+            )),
             const SizedBox(height: 24),
             GestureDetector(
               onTap: () { Navigator.of(context).pop(); Navigator.of(context).popUntil((r) => r.isFirst); },
@@ -454,10 +459,7 @@ class _MultiplayerGameScreenState extends State<MultiplayerGameScreen> with Sing
   @override
   Widget build(BuildContext context) {
     final gs = widget.gameState;
-    final isP1Turn = gs.currentPlayer == Player.one;
-    final p1Color = const Color(0xFFE63946);
-    final p2Color = const Color(0xFF457BFF);
-    final currentColor = isP1Turn ? p1Color : p2Color;
+    final currentColor = gs.currentPlayer.color;
 
     return WillPopScope(
       onWillPop: () async { Navigator.of(context).popUntil((r) => r.isFirst); return false; },
@@ -483,7 +485,7 @@ class _MultiplayerGameScreenState extends State<MultiplayerGameScreen> with Sing
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               child: Row(children: [
-                _ScoreCard(name: gs.player1Name, score: gs.player1Score, color: p1Color, isActive: isP1Turn && !gs.gameOver, pulseAnim: _pulseAnim),
+                _ScoreCard(name: gs.players[0].name, score: gs.players[0].effectiveScore, color: gs.players[0].color, isActive: gs.currentIndex == 0 && !gs.gameOver, pulseAnim: _pulseAnim),
                 Expanded(child: Center(child: AnimatedBuilder(
                   animation: _pulseAnim,
                   builder: (_, __) => Opacity(opacity: _pulseAnim.value,
@@ -494,7 +496,7 @@ class _MultiplayerGameScreenState extends State<MultiplayerGameScreen> with Sing
                     ),
                   ),
                 ))),
-                _ScoreCard(name: gs.player2Name, score: gs.player2Score, color: p2Color, isActive: !isP1Turn && !gs.gameOver, pulseAnim: _pulseAnim, alignRight: true),
+                _ScoreCard(name: gs.players[1].name, score: gs.players[1].effectiveScore, color: gs.players[1].color, isActive: gs.currentIndex == 1 && !gs.gameOver, pulseAnim: _pulseAnim, alignRight: true),
               ]),
             ),
             Expanded(
@@ -507,7 +509,7 @@ class _MultiplayerGameScreenState extends State<MultiplayerGameScreen> with Sing
               padding: const EdgeInsets.only(bottom: 14),
               child: Text(
                 gs.gameOver ? '' : isMyTurn ? '${gs.currentPlayerName} — tap a line' : 'Waiting for ${gs.currentPlayerName}...',
-                style: TextStyle(color: Color(gs.currentPlayerColorValue).withOpacity(0.7), fontSize: 12, fontWeight: FontWeight.w600),
+                style: TextStyle(color: gs.currentPlayer.color.withOpacity(0.7), fontSize: 12, fontWeight: FontWeight.w600),
               ),
             ),
           ]),

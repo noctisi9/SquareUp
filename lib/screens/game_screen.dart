@@ -7,94 +7,160 @@ import '../widgets/game_board.dart';
 
 class GameScreen extends StatefulWidget {
   final GameState gameState;
-  final int aiDifficulty;
-  const GameScreen({super.key, required this.gameState, required this.aiDifficulty});
+  final int aiDifficulty;   // 0 = human vs human
+  final int aiPlayerIndex;  // which player index is AI (-1 = none)
+
+  const GameScreen({
+    super.key,
+    required this.gameState,
+    required this.aiDifficulty,
+    required this.aiPlayerIndex,
+  });
 
   @override
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateMixin {
+class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   late AIEngine? _ai;
   bool _aiThinking = false;
+  int _lastBoxes = 0;
+
+  // Pulse animation for active player indicator
   late AnimationController _pulseCtrl;
   late Animation<double> _pulseAnim;
-  int _lastBoxesCompleted = 0;
+
+  // Timer countdown
+  late AnimationController _timerCtrl;
+  Timer? _countdownTimer;
+  int _secsLeft = 0;
+  bool _timerRunning = false;
+
+  GameState get gs => widget.gameState;
+  bool get isTimeAttack => gs.isTimeAttack;
+  bool get isAITurn => widget.aiPlayerIndex >= 0 && gs.currentIndex == widget.aiPlayerIndex;
 
   @override
   void initState() {
     super.initState();
     _ai = widget.aiDifficulty > 0 ? AIEngine(difficulty: widget.aiDifficulty) : null;
+
     _pulseCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 700))
       ..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.7, end: 1.0)
+    _pulseAnim = Tween<double>(begin: 0.6, end: 1.0)
         .animate(CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOut));
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAIMove());
+
+    _timerCtrl = AnimationController(vsync: this, duration: const Duration(seconds: 1));
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _startTurn();
+    });
   }
 
   @override
   void dispose() {
     _pulseCtrl.dispose();
+    _timerCtrl.dispose();
+    _countdownTimer?.cancel();
     super.dispose();
   }
 
-  // ── Navigation: always safe pop back to home ─────────────────────────────
-  void _goHome() {
-    // Pop everything until we reach the first route (HomeScreen)
-    Navigator.of(context).popUntil((route) => route.isFirst);
+  // ── Turn management ───────────────────────────────────────────────────────
+  void _startTurn() {
+    if (!mounted || gs.gameOver) return;
+    _countdownTimer?.cancel();
+    setState(() => _lastBoxes = 0);
+
+    if (isTimeAttack && !isAITurn) {
+      _secsLeft = gs.timeLimitSeconds;
+      _timerRunning = true;
+      _timerCtrl.forward(from: 0);
+      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!mounted) { t.cancel(); return; }
+        setState(() => _secsLeft--);
+        if (_secsLeft <= 0) {
+          t.cancel();
+          _onTimeout();
+        }
+      });
+    }
+
+    if (isAITurn) _scheduleAI();
   }
 
+  void _stopTimer() {
+    _countdownTimer?.cancel();
+    _timerRunning = false;
+  }
+
+  void _onTimeout() {
+    if (gs.gameOver) return;
+    _stopTimer();
+    // Penalty: -1 to current player, next player gets +1
+    final penalisedName = gs.currentPlayerName;
+    gs.applyTimeoutPenalty();
+    setState(() {});
+    // Show brief snackbar
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('⏱ $penalisedName timed out! −1 point'),
+        backgroundColor: const Color(0xFFE63946),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+    if (gs.gameOver) { _showGameOver(); return; }
+    _startTurn();
+  }
+
+  // ── Human tap ────────────────────────────────────────────────────────────
   void _onLineTapped(LineOrientation orientation, int row, int col) {
-    if (_aiThinking) return;
-    if (widget.gameState.gameOver) return;
-    if (_ai != null && widget.gameState.currentPlayer == Player.two) return;
+    if (_aiThinking || gs.gameOver) return;
+    if (isAITurn) return;
 
-    final result = widget.gameState.drawLine(orientation, row, col);
-    if (!result.success) return;
-    setState(() => _lastBoxesCompleted = result.boxesCompleted);
-    if (widget.gameState.gameOver) { _showGameOver(); return; }
-    _maybeAIMove();
+    _stopTimer();
+    final result = gs.drawLine(orientation, row, col);
+    if (!result.success) { if (isTimeAttack && !isAITurn) _startTurn(); return; }
+
+    setState(() => _lastBoxes = result.boxesCompleted);
+    if (gs.gameOver) { _showGameOver(); return; }
+    _startTurn();
   }
 
-  // ── Undo ─────────────────────────────────────────────────────────────────
+  // ── Undo / Redo ───────────────────────────────────────────────────────────
   void _undo() {
     if (_aiThinking) return;
-    // Undo twice if vs AI (undo AI move + human move)
-    bool did = widget.gameState.undo();
-    if (did && _ai != null && widget.gameState.currentPlayer == Player.two) {
-      widget.gameState.undo(); // undo AI move too
-    }
-    setState(() => _lastBoxesCompleted = 0);
+    _stopTimer();
+    bool did = gs.undo();
+    // If vs AI and now it's AI turn, undo one more
+    if (did && _ai != null && gs.currentIndex == widget.aiPlayerIndex) gs.undo();
+    setState(() => _lastBoxes = 0);
+    _startTurn();
   }
 
   void _redo() {
     if (_aiThinking) return;
-    widget.gameState.redo();
-    // If vs AI and now it's AI turn again, trigger AI
-    setState(() => _lastBoxesCompleted = 0);
-    if (_ai != null && widget.gameState.currentPlayer == Player.two) {
-      _maybeAIMove();
-    }
+    _stopTimer();
+    gs.redo();
+    setState(() => _lastBoxes = 0);
+    _startTurn();
   }
 
-  // ── AI ───────────────────────────────────────────────────────────────────
-  void _maybeAIMove() {
-    if (_ai == null) return;
-    if (widget.gameState.currentPlayer != Player.two) return;
-    if (widget.gameState.gameOver) return;
+  // ── AI move ──────────────────────────────────────────────────────────────
+  void _scheduleAI() {
+    if (!mounted || !isAITurn || gs.gameOver) return;
     setState(() => _aiThinking = true);
-    Future.delayed(const Duration(milliseconds: 550), () {
+    Future.delayed(const Duration(milliseconds: 580), () {
       if (!mounted) return;
-      final move = _ai!.getBestMove(widget.gameState);
+      final move = _ai!.getBestMove(gs);
       if (move != null) {
-        final result = widget.gameState.drawLine(
+        final result = gs.drawLine(
           move['orientation'] as LineOrientation,
-          move['row'] as int,
-          move['col'] as int,
+          move['row'] as int, move['col'] as int,
         );
-        setState(() { _aiThinking = false; _lastBoxesCompleted = result.boxesCompleted; });
-        if (widget.gameState.gameOver) { _showGameOver(); }
-        else if (widget.gameState.currentPlayer == Player.two) { _maybeAIMove(); }
+        setState(() { _aiThinking = false; _lastBoxes = result.boxesCompleted; });
+        if (gs.gameOver) { _showGameOver(); return; }
+        _startTurn();
       } else {
         setState(() => _aiThinking = false);
       }
@@ -103,272 +169,276 @@ class _GameScreenState extends State<GameScreen> with SingleTickerProviderStateM
 
   // ── Game over dialog ──────────────────────────────────────────────────────
   void _showGameOver() {
-    final gs = widget.gameState;
+    _stopTimer();
+    final sorted = gs.sortedPlayers;
     showDialog(
-      context: context,
-      barrierDismissible: false,
+      context: context, barrierDismissible: false,
       builder: (_) => Dialog(
         backgroundColor: const Color(0xFF1C2F45),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('GAME OVER', style: TextStyle(color: Color(0xFF00FFCC), fontSize: 13, letterSpacing: 3, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 20),
-              if (gs.isDrawGame) ...[
-                const Text('🤝', style: TextStyle(fontSize: 48)),
-                const SizedBox(height: 8),
-                const Text("IT'S A DRAW!", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
-              ] else ...[
-                const Text('🏆', style: TextStyle(fontSize: 48)),
-                const SizedBox(height: 8),
-                Text('${gs.winnerName} WINS!', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
-              ],
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  _ScorePill(name: gs.player1Name, score: gs.player1Score, color: const Color(0xFFE63946)),
-                  _ScorePill(name: gs.player2Name, score: gs.player2Score, color: const Color(0xFF457BFF)),
-                ],
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: _DialogBtn(
-                      label: 'REMATCH',
-                      color: const Color(0xFF00FFCC),
-                      onTap: () {
-                        widget.gameState.reset();
-                        Navigator.of(context).pop();
-                        setState(() { _lastBoxesCompleted = 0; });
-                        _maybeAIMove();
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _DialogBtn(
-                      label: 'HOME',
-                      color: Colors.white24,
-                      onTap: () {
-                        Navigator.of(context).pop(); // close dialog
-                        _goHome();                   // safe pop to root
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('GAME OVER', style: TextStyle(color: Color(0xFF00FFCC), fontSize: 12, letterSpacing: 3, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 16),
+            Text(gs.isDrawGame ? "🤝 IT'S A DRAW!" : '🏆 ${gs.winnerName} WINS!',
+                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 16),
+            // Scoreboard
+            ...sorted.asMap().entries.map((e) {
+              final rank = e.key;
+              final p = e.value;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: rank == 0 ? p.color.withOpacity(0.15) : Colors.black12,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: rank == 0 ? p.color.withOpacity(0.5) : Colors.white12),
+                ),
+                child: Row(children: [
+                  Text(rank == 0 ? '🥇' : rank == 1 ? '🥈' : rank == 2 ? '🥉' : '  ', style: const TextStyle(fontSize: 16)),
+                  const SizedBox(width: 8),
+                  Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: p.color)),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(p.name, style: TextStyle(color: p.color, fontWeight: FontWeight.w800))),
+                  Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Text('${p.effectiveScore} pts', style: TextStyle(color: p.color, fontSize: 15, fontWeight: FontWeight.w900)),
+                    if (gs.isTimeAttack && p.penaltyPoints > 0)
+                      Text('${p.score} boxes −${p.penaltyPoints} penalty',
+                          style: const TextStyle(color: Colors.white38, fontSize: 10)),
+                  ]),
+                ]),
+              );
+            }),
+            const SizedBox(height: 20),
+            Row(children: [
+              Expanded(child: _dialogBtn('REMATCH', const Color(0xFF00FFCC), () {
+                gs.reset();
+                Navigator.of(context).pop();
+                setState(() => _lastBoxes = 0);
+                _startTurn();
+              })),
+              const SizedBox(width: 12),
+              Expanded(child: _dialogBtn('HOME', Colors.white24, () {
+                Navigator.of(context).pop();
+                Navigator.of(context).popUntil((r) => r.isFirst);
+              })),
+            ]),
+          ]),
         ),
       ),
     );
   }
 
-  // ── Quit confirmation ─────────────────────────────────────────────────────
   void _confirmExit() {
+    _stopTimer();
     showDialog(
       context: context,
       builder: (_) => Dialog(
         backgroundColor: const Color(0xFF1C2F45),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('QUIT GAME?', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(child: _DialogBtn(label: 'STAY', color: const Color(0xFF00FFCC), onTap: () => Navigator.of(context).pop())),
-                  const SizedBox(width: 12),
-                  Expanded(child: _DialogBtn(
-                    label: 'QUIT',
-                    color: const Color(0xFFE63946),
-                    onTap: () {
-                      Navigator.of(context).pop(); // close dialog
-                      _goHome();                   // safe pop to root
-                    },
-                  )),
-                ],
-              ),
-            ],
-          ),
+          padding: const EdgeInsets.all(22),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Text('QUIT GAME?', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(child: _dialogBtn('STAY', const Color(0xFF00FFCC), () {
+                Navigator.of(context).pop();
+                if (isTimeAttack && !isAITurn) _startTurn();
+              })),
+              const SizedBox(width: 12),
+              Expanded(child: _dialogBtn('QUIT', const Color(0xFFE63946), () {
+                Navigator.of(context).pop();
+                Navigator.of(context).popUntil((r) => r.isFirst);
+              })),
+            ]),
+          ]),
         ),
       ),
     );
   }
 
+  // ── Build ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final gs = widget.gameState;
-    final isP1Turn = gs.currentPlayer == Player.one;
-    final p1Color = const Color(0xFFE63946);
-    final p2Color = const Color(0xFF457BFF);
-    final currentColor = isP1Turn ? p1Color : p2Color;
+    final cp = gs.currentPlayer;
+    final cpColor = cp.color;
 
     return WillPopScope(
-      onWillPop: () async {
-        _confirmExit();
-        return false; // we handle navigation ourselves
-      },
+      onWillPop: () async { _confirmExit(); return false; },
       child: Scaffold(
         backgroundColor: const Color(0xFF0D1B2A),
         body: SafeArea(
-          child: Column(
-            children: [
-              // ── Top bar ──────────────────────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.fromLTRB(4, 8, 4, 0),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back_ios, color: Colors.white38, size: 18),
-                      onPressed: _confirmExit,
-                    ),
-                    const Spacer(),
-                    Text('${gs.gridCols - 1}×${gs.gridRows - 1} GRID',
-                        style: const TextStyle(color: Colors.white24, fontSize: 11, letterSpacing: 2)),
-                    const Spacer(),
-                    // Undo button
-                    IconButton(
-                      icon: Icon(Icons.undo_rounded,
-                          color: gs.canUndo && !_aiThinking ? const Color(0xFF00FFCC) : Colors.white12,
-                          size: 22),
-                      onPressed: gs.canUndo && !_aiThinking ? _undo : null,
-                      tooltip: 'Undo',
-                    ),
-                    // Redo button
-                    IconButton(
-                      icon: Icon(Icons.redo_rounded,
-                          color: gs.canRedo && !_aiThinking ? const Color(0xFFF4A261) : Colors.white12,
-                          size: 22),
-                      onPressed: gs.canRedo && !_aiThinking ? _redo : null,
-                      tooltip: 'Redo',
-                    ),
-                  ],
+          child: Column(children: [
+            // ── Top bar ──────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+              child: Row(children: [
+                IconButton(
+                  icon: const Icon(Icons.arrow_back_ios, color: Colors.white38, size: 18),
+                  onPressed: _confirmExit,
                 ),
-              ),
+                Text('${gs.gridCols - 1}×${gs.gridRows - 1}',
+                    style: const TextStyle(color: Colors.white24, fontSize: 11, letterSpacing: 2)),
+                if (isTimeAttack) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFF6BB5).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: const Color(0xFFFF6BB5).withOpacity(0.5)),
+                    ),
+                    child: const Text('⚡ TIME ATTACK',
+                        style: TextStyle(color: Color(0xFFFF6BB5), fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1)),
+                  ),
+                ],
+                const Spacer(),
+                IconButton(
+                  icon: Icon(Icons.undo_rounded,
+                      color: gs.canUndo && !_aiThinking ? const Color(0xFF00FFCC) : Colors.white12,
+                      size: 22),
+                  onPressed: gs.canUndo && !_aiThinking ? _undo : null,
+                ),
+                IconButton(
+                  icon: Icon(Icons.redo_rounded,
+                      color: gs.canRedo && !_aiThinking ? const Color(0xFFF4A261) : Colors.white12,
+                      size: 22),
+                  onPressed: gs.canRedo && !_aiThinking ? _redo : null,
+                ),
+              ]),
+            ),
 
-              // ── Score bar ────────────────────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
-                  children: [
-                    _PlayerScoreCard(name: gs.player1Name, score: gs.player1Score, color: p1Color, isActive: isP1Turn && !gs.gameOver, pulseAnim: _pulseAnim),
-                    Expanded(
-                      child: Center(
-                        child: _aiThinking
-                            ? const SizedBox(width: 18, height: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF457BFF)))
-                            : AnimatedBuilder(
-                                animation: _pulseAnim,
-                                builder: (_, __) => Opacity(
-                                  opacity: _pulseAnim.value,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                    decoration: BoxDecoration(
-                                      color: currentColor.withOpacity(0.12),
-                                      borderRadius: BorderRadius.circular(20),
-                                      border: Border.all(color: currentColor.withOpacity(0.4)),
-                                    ),
-                                    child: Text(gs.gameOver ? 'DONE' : 'YOUR TURN',
-                                        style: TextStyle(color: currentColor, fontSize: 9, fontWeight: FontWeight.w800, letterSpacing: 1.5)),
-                                  ),
-                                ),
-                              ),
+            // ── Timer bar (Time Attack only) ─────────────────────────────
+            if (isTimeAttack && !gs.gameOver && _timerRunning)
+              _TimerBar(secsLeft: _secsLeft, total: gs.timeLimitSeconds, color: cpColor),
+
+            // ── Score strip (all players) ────────────────────────────────
+            SizedBox(
+              height: 68,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                itemCount: gs.players.length,
+                itemBuilder: (_, i) {
+                  final p = gs.players[i];
+                  final active = gs.currentIndex == i && !gs.gameOver;
+                  return AnimatedBuilder(
+                    animation: _pulseAnim,
+                    builder: (_, __) => AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      margin: const EdgeInsets.only(right: 8, top: 4, bottom: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: active ? p.color.withOpacity(0.15) : const Color(0xFF1C2F45),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: active ? p.color.withOpacity(0.4 + 0.3 * _pulseAnim.value) : Colors.white12,
+                          width: active ? 2 : 1,
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(mainAxisSize: MainAxisSize.min, children: [
+                            Container(width: 8, height: 8, decoration: BoxDecoration(shape: BoxShape.circle, color: p.color)),
+                            const SizedBox(width: 5),
+                            Text(p.name, style: TextStyle(color: p.color, fontSize: 10, fontWeight: FontWeight.w800)),
+                          ]),
+                          Text('${p.effectiveScore}',
+                              style: TextStyle(color: active ? p.color : Colors.white54, fontSize: 20, fontWeight: FontWeight.w900, height: 1.1)),
+                          if (gs.isTimeAttack && p.penaltyPoints > 0)
+                            Text('−${p.penaltyPoints}', style: const TextStyle(color: Color(0xFFE63946), fontSize: 9, fontWeight: FontWeight.w700)),
+                        ],
                       ),
                     ),
-                    _PlayerScoreCard(name: gs.player2Name, score: gs.player2Score, color: p2Color, isActive: !isP1Turn && !gs.gameOver, pulseAnim: _pulseAnim, alignRight: true),
-                  ],
+                  );
+                },
+              ),
+            ),
+
+            // ── Board ────────────────────────────────────────────────────
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: GameBoard(
+                  gameState: gs,
+                  onLineTapped: _onLineTapped,
+                  aiThinking: _aiThinking,
                 ),
               ),
+            ),
 
-              // ── Board ────────────────────────────────────────────────────
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  child: GameBoard(gameState: gs, onLineTapped: _onLineTapped, aiThinking: _aiThinking),
-                ),
-              ),
-
-              // ── Turn hint ─────────────────────────────────────────────────
-              Padding(
-                padding: const EdgeInsets.only(bottom: 14),
+            // ── Bottom hint ───────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12, top: 2),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 300),
                 child: Text(
+                  key: ValueKey('$_aiThinking${gs.currentIndex}$_lastBoxes'),
                   gs.gameOver ? '' :
                   _aiThinking ? 'CPU is thinking...' :
-                  _lastBoxesCompleted > 0
-                      ? '${gs.currentPlayerName} gets another turn! +$_lastBoxesCompleted'
-                      : '${gs.currentPlayerName} — tap a line',
-                  style: TextStyle(color: Color(gs.currentPlayerColorValue).withOpacity(0.7), fontSize: 12, fontWeight: FontWeight.w600),
+                  isTimeAttack && _timerRunning ? '$_secsLeft s — ${gs.currentPlayerName}\'s move' :
+                  _lastBoxes > 0 ? '${gs.currentPlayerName} gets another turn! +$_lastBoxes' :
+                  '${gs.currentPlayerName} — tap a line',
+                  style: TextStyle(color: cpColor.withOpacity(0.75), fontSize: 12, fontWeight: FontWeight.w600),
                 ),
               ),
-            ],
-          ),
+            ),
+          ]),
         ),
       ),
     );
   }
+
+  Widget _dialogBtn(String label, Color color, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: color.withOpacity(0.5)),
+          ),
+          child: Center(child: Text(label,
+              style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 1.5))),
+        ),
+      );
 }
 
-// ── Supporting widgets ────────────────────────────────────────────────────────
-
-class _PlayerScoreCard extends StatelessWidget {
-  final String name; final int score; final Color color;
-  final bool isActive; final Animation<double> pulseAnim; final bool alignRight;
-  const _PlayerScoreCard({required this.name, required this.score, required this.color, required this.isActive, required this.pulseAnim, this.alignRight = false});
+// ── Timer bar widget ──────────────────────────────────────────────────────────
+class _TimerBar extends StatelessWidget {
+  final int secsLeft, total;
+  final Color color;
+  const _TimerBar({required this.secsLeft, required this.total, required this.color});
 
   @override
-  Widget build(BuildContext context) => AnimatedBuilder(
-    animation: pulseAnim,
-    builder: (_, __) => AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: isActive ? color.withOpacity(0.12) : const Color(0xFF1C2F45),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: isActive ? color.withOpacity(0.5 * pulseAnim.value + 0.3) : Colors.white12, width: isActive ? 1.5 : 1),
-      ),
-      child: Column(
-        crossAxisAlignment: alignRight ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        children: [
-          Text(name, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 1)),
-          Text('$score', style: TextStyle(color: isActive ? color : Colors.white54, fontSize: 24, fontWeight: FontWeight.w900, height: 1.1)),
-        ],
-      ),
-    ),
-  );
-}
-
-class _ScorePill extends StatelessWidget {
-  final String name; final int score; final Color color;
-  const _ScorePill({required this.name, required this.score, required this.color});
-  @override
-  Widget build(BuildContext context) => Column(children: [
-    Text(name, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w800)),
-    Text('$score boxes', style: const TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.w700)),
-  ]);
-}
-
-class _DialogBtn extends StatelessWidget {
-  final String label; final Color color; final VoidCallback onTap;
-  const _DialogBtn({required this.label, required this.color, required this.onTap});
-  @override
-  Widget build(BuildContext context) => GestureDetector(
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.symmetric(vertical: 13),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.15), borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.5)),
-      ),
-      child: Center(child: Text(label, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w800, letterSpacing: 1.5))),
-    ),
-  );
+  Widget build(BuildContext context) {
+    final ratio = total > 0 ? (secsLeft / total).clamp(0.0, 1.0) : 0.0;
+    final barColor = ratio > 0.5 ? const Color(0xFF00FFCC) :
+                     ratio > 0.25 ? const Color(0xFFFFD166) :
+                     const Color(0xFFE63946);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Column(children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text('⏱ $secsLeft s', style: TextStyle(color: barColor, fontSize: 13, fontWeight: FontWeight.w900)),
+          Text('/ $total s', style: const TextStyle(color: Colors.white24, fontSize: 11)),
+        ]),
+        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: ratio,
+            backgroundColor: Colors.white12,
+            valueColor: AlwaysStoppedAnimation<Color>(barColor),
+            minHeight: 6,
+          ),
+        ),
+      ]),
+    );
+  }
 }
