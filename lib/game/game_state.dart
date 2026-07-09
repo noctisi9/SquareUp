@@ -27,7 +27,7 @@ class PlayerColors {
 
 // ── Player definition ─────────────────────────────────────────────────────────
 class PlayerDef {
-  final int index;        // 0-based
+  int index;        // 0-based — mutable so we can swap player order
   String name;
   String initial;
   Color color;

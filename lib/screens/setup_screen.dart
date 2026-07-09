@@ -57,25 +57,45 @@ class _SetupScreenState extends State<SetupScreen> {
   }
 
   void _start() {
-    final count = widget.vsAI ? 2 : _playerCount;
-    final playerList = List.generate(count, (i) {
-      final isAI = widget.vsAI && i == (_playerGoesFirst ? 1 : 0);
-      final rawName = _nameCtrl[i].text.trim().toUpperCase();
-      final name = isAI ? 'CPU' : (rawName.isEmpty ? 'P${i+1}' : rawName);
-      return PlayerDef(
-        index: i,
-        name: name,
-        initial: name.substring(0, 1),
-        color: PlayerColors.palette[_colorIndex[i]],
-      );
-    });
+    List<PlayerDef> playerList;
 
-    // If player chose to go second vs AI, swap order
-    if (widget.vsAI && !_playerGoesFirst) {
-      final tmp = playerList[0];
-      playerList[0] = playerList[1];
-      playerList[1] = tmp;
-      playerList[0].index == 0;
+    if (widget.vsAI) {
+      // P0 in setup = human, P1 in setup = CPU (UI always shows human first)
+      final humanName = _nameCtrl[0].text.trim().toUpperCase();
+      final humanDef = PlayerDef(
+        index: 0,
+        name: humanName.isEmpty ? 'P1' : humanName,
+        initial: (humanName.isEmpty ? 'P' : humanName.substring(0, 1)),
+        color: PlayerColors.palette[_colorIndex[0]],
+      );
+      final cpuDef = PlayerDef(
+        index: 1,
+        name: 'CPU',
+        initial: 'C',
+        color: PlayerColors.palette[_colorIndex[1]],
+      );
+
+      // _playerGoesFirst = true  → human is index 0, CPU is index 1
+      // _playerGoesFirst = false → CPU is index 0 (goes first), human is index 1
+      if (_playerGoesFirst) {
+        humanDef.index = 0; cpuDef.index = 1;
+        playerList = [humanDef, cpuDef];
+      } else {
+        humanDef.index = 1; cpuDef.index = 0;
+        playerList = [cpuDef, humanDef];
+      }
+    } else {
+      // VS Friends — N players, each with their chosen name and color
+      playerList = List.generate(_playerCount, (i) {
+        final rawName = _nameCtrl[i].text.trim().toUpperCase();
+        final name = rawName.isEmpty ? 'P${i + 1}' : rawName;
+        return PlayerDef(
+          index: i,
+          name: name,
+          initial: name.substring(0, 1),
+          color: PlayerColors.palette[_colorIndex[i]],
+        );
+      });
     }
 
     final gs = GameState(
@@ -87,11 +107,16 @@ class _SetupScreenState extends State<SetupScreen> {
       timeLimitSeconds: _timeAttack ? _timeSecs : 0,
     );
 
+    // aiPlayerIndex: which index in the final list is the CPU
+    final aiIdx = widget.vsAI
+        ? (_playerGoesFirst ? 1 : 0)  // human first → CPU at 1; human second → CPU at 0
+        : -1;
+
     Navigator.pushReplacement(context,
         MaterialPageRoute(builder: (_) => GameScreen(
           gameState: gs,
           aiDifficulty: widget.vsAI ? _aiDifficulty : 0,
-          aiPlayerIndex: widget.vsAI ? (_playerGoesFirst ? 1 : 0) : -1,
+          aiPlayerIndex: aiIdx,
         )));
   }
 
@@ -179,12 +204,18 @@ class _SetupScreenState extends State<SetupScreen> {
               // ── Player Names + Color Pickers ───────────────────────────
               _label('PLAYERS'),
               const SizedBox(height: 10),
+              // In VS AI mode: row 0 = human (always), row 1 = CPU (always)
+              // Colors: _colorIndex[0] = human color, _colorIndex[1] = CPU color
               ...List.generate(widget.vsAI ? 2 : _playerCount, (i) {
-                final isAI = widget.vsAI && i == (_playerGoesFirst ? 1 : 0);
+                final isAI = widget.vsAI && i == 1; // CPU is always shown as row 1 in UI
+                final label = widget.vsAI
+                    ? (i == 0 ? 'YOU' : 'CPU')
+                    : 'P${i + 1}';
                 return Padding(
                   padding: const EdgeInsets.only(bottom: 10),
                   child: _PlayerRow(
                     index: i,
+                    label: label,
                     controller: _nameCtrl[i],
                     colorIndex: _colorIndex[i],
                     isAI: isAI,
@@ -338,6 +369,7 @@ class _SetupScreenState extends State<SetupScreen> {
 // ── Player row with name field + color picker ─────────────────────────────────
 class _PlayerRow extends StatelessWidget {
   final int index;
+  final String label;
   final TextEditingController controller;
   final int colorIndex;
   final bool isAI;
@@ -345,7 +377,7 @@ class _PlayerRow extends StatelessWidget {
   final List<int> takenColors;
 
   const _PlayerRow({
-    required this.index, required this.controller, required this.colorIndex,
+    required this.index, required this.label, required this.controller, required this.colorIndex,
     required this.isAI, required this.onColorChanged, required this.takenColors,
   });
 
@@ -363,7 +395,7 @@ class _PlayerRow extends StatelessWidget {
         Row(children: [
           Container(width: 10, height: 10, decoration: BoxDecoration(shape: BoxShape.circle, color: color)),
           const SizedBox(width: 8),
-          Text('P${index + 1}', style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1)),
+          Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 1)),
           const SizedBox(width: 12),
           Expanded(
             child: isAI
